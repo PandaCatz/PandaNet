@@ -20,7 +20,7 @@ with its expected output.
 | `deploy/Caddyfile` | TLS + reverse proxy (WebSocket passes through automatically). |
 | `deploy/backup.sh` | Nightly SQLite online backup, 14-day rotation. |
 | `deploy/restore.sh` | Safe restore (stops service, clears WAL sidecars, integrity-checks). |
-| `PROPOSAL.md` | The design rationale and platform-integration pitch. Read it first for context. |
+| `INTEGRATION.md` | Platform-integration design and rationale. Read it first for context. |
 | `README.md` | Feature overview and capacity numbers. |
 
 Runtime contract: **Node >= 22.5** (uses built-in `node:sqlite`; the

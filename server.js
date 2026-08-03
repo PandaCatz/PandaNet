@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // PandaNet — multi-game online backend for TipTap games.
-// Single-file, dependency-free (Node >= 22.5, node:sqlite). See README.md + PROPOSAL.md.
+// Single-file, dependency-free (Node >= 22.5, node:sqlite). See README.md + INTEGRATION.md.
 //
 //   PORT=8324 DB=./pandanet.db ADMIN_KEY=x SEED_KEY=x PROXY_KEY=x node server.js
 //
@@ -9,7 +9,7 @@
 //     scoring requests. For games talking straight to this server.
 //   Proxy mode — the platform's server calls us with X-Proxy-Key and vouches
 //     for identity via X-Player-Id / X-Player-Name headers. No client secrets
-//     anywhere. This is the integration shape proposed in PROPOSAL.md.
+//     anywhere. This is the integration shape described in INTEGRATION.md.
 //
 // Endpoints (JSON; CORS * for direct mode):
 //   POST /api/hello        {game, name?} | {playerId, secret}     -> identity
