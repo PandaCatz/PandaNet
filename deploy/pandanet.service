@@ -1,0 +1,29 @@
+[Unit]
+Description=PandaNet game API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pandanet
+Group=pandanet
+WorkingDirectory=/opt/pandanet
+ExecStart=/usr/bin/node /opt/pandanet/server.js
+Restart=always
+RestartSec=3
+Environment=PORT=8324
+Environment=DB=/opt/pandanet/data/pandanet.db
+Environment=TRUST_PROXY=1
+# Set real values in this file (chmod 600) — never commit them:
+EnvironmentFile=/opt/pandanet/env
+
+# Hardening — the process can only write its data dir.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pandanet/data
+PrivateTmp=true
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

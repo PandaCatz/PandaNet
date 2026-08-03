@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: syntax + end-to-end suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions are pinned to commit SHAs, not tags — a tag can be moved to
+      # point at different code after review.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: '22'
+
+      - name: Confirm node:sqlite is available
+        run: |
+          node --version
+          node -e "require('node:sqlite'); console.log('node:sqlite ok')"
+
+      - name: Syntax check
+        run: |
+          for f in server.js mp.js client-sdk.js test.js; do node --check "$f"; done
+          for s in deploy/*.sh; do bash -n "$s"; done
+
+      - name: End-to-end suite
+        run: node test.js
+
+      # The suite asserts its own total, so a silently truncated run (an early
+      # return, a crashed server) cannot pass as green.
+      - name: Assert full suite ran
+        run: node test.js | tee /tmp/out.txt && grep -q "65 passed, 0 failed" /tmp/out.txt
+
+  secrets:
+    name: no committed secrets or databases
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Scan tracked files
+        run: |
+          set -e
+          if git ls-files | grep -qE '\.(db|db-wal|db-shm|pem|key)$|(^|/)\.?env$'; then
+            echo "::error::a database, key, or env file is tracked"; exit 1
+          fi
+          if git grep -nIE 'gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY' -- . ; then
+            echo "::error::possible credential committed"; exit 1
+          fi
+          echo "clean"

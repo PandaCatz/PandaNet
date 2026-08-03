@@ -1,0 +1,18 @@
+# Databases — runtime state, never committed. The suite writes test.db beside
+# the sources, and a dev run writes pandanet.db; both would leak player data.
+*.db
+*.db-wal
+*.db-shm
+backups/
+
+# Secrets. setup.sh generates /opt/pandanet/env on the server; if anyone ever
+# keeps a local copy for testing, it must not be committable.
+env
+.env
+.env.*
+*.pem
+*.key
+
+node_modules/
+npm-debug.log*
+.DS_Store
