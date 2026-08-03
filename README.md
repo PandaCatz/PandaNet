@@ -5,7 +5,7 @@
 ### The online layer for arcade games — leaderboards, ghosts, live events, and realtime races on a $5 VPS
 
 [![CI](https://github.com/PandaCatz/PandaNet/actions/workflows/ci.yml/badge.svg)](https://github.com/PandaCatz/PandaNet/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](test.js)
+[![Tests](https://img.shields.io/badge/tests-67%20passing-brightgreen.svg)](test.js)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#zero-dependencies)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.5-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
@@ -70,7 +70,7 @@ files to a box and run them.
 git clone https://github.com/PandaCatz/PandaNet.git
 cd PandaNet
 node server.js       # http://localhost:8324 — interactive demo console at /
-node test.js         # 65-assertion end-to-end suite
+node test.js         # 67-assertion end-to-end suite
 ```
 
 The demo console at `/` drives every endpoint through the real client SDK,
@@ -140,6 +140,9 @@ and verify it end to end without asking anyone.
 | Idle memory | ~40 MB (unit caps at 256 MB) |
 
 Every request is a sub-millisecond indexed SQLite read or write in WAL mode.
+The one exception is the all-time board, which aggregates across days; it has
+its own index and a 60-second memo cache, because this engine is synchronous
+and a slow query there would stall the event loop for every other request.
 A single box handles hundreds of requests per second and thousands of
 concurrent sockets. It's single-node by design — the game id is the natural
 shard key if it ever outgrows one machine.
@@ -181,7 +184,7 @@ server.js          HTTP API — identity, seeds, events, runs, boards, ghosts, a
 mp.js              WebSocket relay + room manager (RFC 6455, hand-written)
 client-sdk.js      Browser SDK — resolves-or-null, never throws
 demo.html          Interactive console with a scripted rival bot
-test.js            65-assertion end-to-end suite (HTTP + live 2-socket race)
+test.js            67-assertion end-to-end suite (HTTP + live 2-socket race)
 deploy/            Ubuntu provisioner, systemd unit, Caddyfile, backup + restore
 AGENT_HANDOFF.md   Deploy and integration runbook
 INTEGRATION.md     Platform integration design

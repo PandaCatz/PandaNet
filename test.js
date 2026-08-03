@@ -60,6 +60,15 @@ async function rawWs(me, game) {
   return s;
 }
 
+// Direct write against the same database file the server has open, for setting
+// up states the API cannot reach (a previous day's rows).
+function db_exec(sql, params) {
+  const { DatabaseSync } = require('node:sqlite');
+  const d = new DatabaseSync(DB);
+  d.prepare(sql).run(...params);
+  d.close();
+}
+
 // Age an open run token so it looks like it was minted on a previous day and
 // abandoned — the exact shape the day-boundary guard has to reject.
 function db_backdate(runId) {
@@ -119,7 +128,9 @@ function wsClient(ticket) {
 async function main() {
   for (const f of [DB, DB + '-wal', DB + '-shm']) { try { fs.unlinkSync(f); } catch {} }
   const srv = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
-    env: { ...process.env, PORT: String(PORT), DB, ADMIN_KEY: 'test-admin', SEED_KEY: 'test-seed', PROXY_KEY: 'test-proxy' },
+    // The whole suite drives one IP, so the production 60/min bucket would
+    // throttle the tail of the run and report the 429s as unrelated failures.
+    env: { ...process.env, PORT: String(PORT), DB, ADMIN_KEY: 'test-admin', SEED_KEY: 'test-seed', PROXY_KEY: 'test-proxy', RATE_PER_MIN: '100000' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   srv.stderr.on('data', d => { const s = String(d); if (!s.includes('ExperimentalWarning') && !s.includes('trace-warnings')) process.stderr.write(s); });
@@ -447,9 +458,47 @@ async function main() {
       x1.close(); x2.close();
     }
 
+    // The all-time board must keep `rooms` from the row owning the max score,
+    // and must stay correct now that it is served from a short-lived cache.
+    // Needs two days of scores for one player, which nothing else creates.
+    {
+      const ap = (await post('/api/hello', { name: 'alltimer' })).body;
+      await post('/api/admin/game', { game: 'atgame', cfg: { minMs: 300 } }, { 'X-Admin-Key': 'test-admin' });
+      await playRun(ap, 'atgame', 100, 1);                       // low score, rooms 1
+      const yest = new Date(Date.now() - 26 * 3600e3).toISOString().slice(0, 10);
+      db_exec('UPDATE scores SET day = ? WHERE game = ? AND player = ?', [yest, 'atgame', ap.playerId]);
+      await playRun(ap, 'atgame', 9000, 9);                      // high score, rooms 9
+      r = await get('/api/board?game=atgame&scope=alltime');
+      ok(r.body.top.length === 1 && r.body.top[0].score === 9000 && r.body.top[0].rooms === 9,
+        `all-time board keeps rooms from the row owning the max score (score ${r.body.top[0] && r.body.top[0].score}, rooms ${r.body.top[0] && r.body.top[0].rooms})`);
+    }
+
+    // The suite runs with the limiter effectively disabled, which would hide a
+    // broken limiter entirely. Prove it still works with a tiny budget.
+    {
+      const rlPort = PORT + 3;
+      const rl = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+        env: { ...process.env, PORT: String(rlPort), DB, ADMIN_KEY: 'x', SEED_KEY: 'y', RATE_PER_MIN: '3' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      await new Promise((res, rej) => {
+        rl.stdout.on('data', d => { if (String(d).includes('listening')) res(); });
+        setTimeout(() => rej(new Error('rate-limit server never came up')), 15000);
+      });
+      let throttled = 0;
+      for (let i = 0; i < 12; i++) {
+        const rr = await fetch(`http://127.0.0.1:${rlPort}/api/health`);
+        if (rr.status === 429) throttled++;
+      }
+      rl.kill();
+      ok(throttled > 0, `rate limiter still enforces its budget (${throttled}/12 throttled at RATE_PER_MIN=3)`);
+    }
+
     // --- health
     r = await get('/api/health');
-    ok(r.body.ok === true && r.body.games >= 2, `health: ${r.body.players} players, ${r.body.games} games, ${r.body.sockets} sockets`);
+    ok(r.body.ok === true && typeof r.body.players === 'number' && typeof r.body.games === 'number'
+      && r.body.games >= 2,
+      `health: ${r.body.players} players, ${r.body.games} games, ${r.body.sockets} sockets`);
   } finally {
     srv.kill();
   }

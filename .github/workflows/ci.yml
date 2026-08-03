@@ -46,7 +46,7 @@ jobs:
       # The suite asserts its own total, so a silently truncated run (an early
       # return, a crashed server) cannot pass as green.
       - name: Assert full suite ran
-        run: node test.js | tee /tmp/out.txt && grep -q "65 passed, 0 failed" /tmp/out.txt
+        run: node test.js | tee /tmp/out.txt && grep -q "67 passed, 0 failed" /tmp/out.txt
 
   secrets:
     name: no committed secrets or databases

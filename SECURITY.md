@@ -49,7 +49,7 @@ relayed, never interpreted.
 
 ## Verifying a change
 
-`node test.js` must print `65 passed, 0 failed`. The suite covers every
+`node test.js` must print `67 passed, 0 failed`. The suite covers every
 rejection path, not just happy paths, including malformed WebSocket frames,
 ping floods, prototype-pollution message types, expired run tokens, and
 tampered signatures. CI runs it on every push and pull request.

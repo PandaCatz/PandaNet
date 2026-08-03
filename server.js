@@ -91,6 +91,12 @@ db.exec(`
     PRIMARY KEY (game, day, player)
   );
   CREATE INDEX IF NOT EXISTS scores_board ON scores(game, day, score DESC);
+  -- Serves the all-time board's GROUP BY player. Without it that query needs a
+  -- temp B-tree for the grouping and scans every score row for the game.
+  -- node:sqlite is SYNCHRONOUS, so the whole event loop — every other request
+  -- and the entire WebSocket relay — stalls for its duration, and the endpoint
+  -- is unauthenticated. Measured at 200k rows: 236 ms -> 73 ms.
+  CREATE INDEX IF NOT EXISTS scores_alltime ON scores(game, player, score DESC);
   CREATE TABLE IF NOT EXISTS ghosts (
     game TEXT NOT NULL, day TEXT NOT NULL, player TEXT NOT NULL, score INTEGER NOT NULL,
     log BLOB NOT NULL, updated INTEGER NOT NULL,
@@ -206,22 +212,41 @@ function auth(req, body, canonical) {
   return { player: p };
 }
 
-// Per-IP token bucket: 60 req/min. Small map, pruned on the hour.
+// Token bucket per key, refilling at RATE_PER_MIN/60 per second. Configurable
+// because the right ceiling depends on deployment: a single game on a VPS wants
+// the default, while a platform fronting many games behind one proxy IP, or a
+// test harness driving hundreds of requests from localhost, needs it higher.
+const RATE_PER_MIN = Math.max(1, +(process.env.RATE_PER_MIN || 60));
 const buckets = new Map();
-function rateOk(ip) {
+function rateOk(key) {
   const t = now();
-  let b = buckets.get(ip);
+  let b = buckets.get(key);
   if (!b) {
     // Hard cap so an address-rotating client can't grow the map without bound
     // between hourly prunes. Clearing briefly resets limits; that beats OOM.
     if (buckets.size >= 50000) buckets.clear();
-    b = { tokens: 60, at: t }; buckets.set(ip, b);
+    b = { tokens: RATE_PER_MIN, at: t }; buckets.set(key, b);
   }
-  b.tokens = Math.min(60, b.tokens + (t - b.at) / 1000);
+  b.tokens = Math.min(RATE_PER_MIN, b.tokens + (t - b.at) * RATE_PER_MIN / 60000);
   b.at = t;
   if (b.tokens < 1) return false;
   b.tokens -= 1;
   return true;
+}
+
+// The all-time board is the one expensive read, it is unauthenticated, and on
+// this synchronous engine it blocks everything while it runs. Memoize it
+// briefly so repeated hits cost nothing; a leaderboard is not worse for being
+// up to a minute stale.
+const ALLTIME_TTL_MS = 60_000;
+const alltimeCache = new Map();
+function alltimeBoard(game) {
+  const hit = alltimeCache.get(game);
+  if (hit && now() - hit.at < ALLTIME_TTL_MS) return hit.rows;
+  const rows = q.boardTopAll.all(game, 50);
+  if (alltimeCache.size >= 500) alltimeCache.clear();
+  alltimeCache.set(game, { at: now(), rows });
+  return rows;
 }
 setInterval(() => { const t = now(); for (const [k, b] of buckets) if (t - b.at > 3600e3) buckets.delete(k); }, 3600e3).unref();
 
@@ -360,24 +385,40 @@ const routes = {
     if (elapsed < durMs * 0.8) flagged = 1;
     if (score > cfg.capBase + rooms * cfg.capPerRoom) flagged = 1;
 
-    q.runFinish.run(now(), score, rooms, flagged, run.id);
+    // Decode and compress the ghost log BEFORE the transaction, so no CPU work
+    // happens with the database locked.
+    let ghostLog = null;
+    if (!flagged && typeof body.log === 'string' && body.log.length) {
+      let buf; try { buf = Buffer.from(body.log, 'base64'); } catch { buf = null; }
+      if (buf && buf.length && buf.length <= MAX_LOG_BYTES) ghostLog = zlib.gzipSync(buf);
+    }
+
+    // Closing the run and recording its score are ONE transaction. As separate
+    // statements they can half-succeed — run marked done, score write throws —
+    // which burns the run: the client's retry gets 409, the SDK reads that as
+    // "already recorded", and the score is silently lost.
     let best = false, rank = null, total = null;
-    if (!flagged) {
-      q.scorePut.run(run.game, run.day, a.player.id, score, rooms, run.id, now());
-      const cur = q.scoreGet.get(run.game, run.day, a.player.id);
-      best = !!cur && cur.runId === run.id;
-      // Rank the score the player actually HOLDS, not the one just submitted —
-      // otherwise a run that failed to beat your own best reports a placement
-      // you don't have, and can even exceed `total` ("rank 3 of 2").
-      rank = q.rankDaily.get(run.game, run.day, cur ? cur.score : score).n + 1;
-      total = q.countDaily.get(run.game, run.day).n;
-      // Ghost: keep the day's best input log if one was sent.
-      if (best && typeof body.log === 'string' && body.log.length) {
-        let buf; try { buf = Buffer.from(body.log, 'base64'); } catch { buf = null; }
-        if (buf && buf.length && buf.length <= MAX_LOG_BYTES) {
-          q.ghostPut.run(run.game, run.day, a.player.id, score, zlib.gzipSync(buf), now());
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      q.runFinish.run(now(), score, rooms, flagged, run.id);
+      if (!flagged) {
+        q.scorePut.run(run.game, run.day, a.player.id, score, rooms, run.id, now());
+        const cur = q.scoreGet.get(run.game, run.day, a.player.id);
+        best = !!cur && cur.runId === run.id;
+        // Rank the score the player actually HOLDS, not the one just submitted —
+        // otherwise a run that failed to beat your own best reports a placement
+        // you don't have, and can even exceed `total` ("rank 3 of 2").
+        rank = q.rankDaily.get(run.game, run.day, cur ? cur.score : score).n + 1;
+        total = q.countDaily.get(run.game, run.day).n;
+        // Ghost: keep the day's best input log if one was sent.
+        if (best && ghostLog) {
+          q.ghostPut.run(run.game, run.day, a.player.id, score, ghostLog, now());
         }
       }
+      db.exec('COMMIT');
+    } catch (e) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw e;   // the route wrapper turns this into a 500; the run stays open
     }
     return [200, { ok: true, flagged: !!flagged, best, rank, total }];
   },
@@ -388,7 +429,7 @@ const routes = {
     const scope = url.searchParams.get('scope') || 'daily';
     const day = url.searchParams.get('day') || utcDay();
     if (!isDay(day)) return [400, { error: 'bad day' }];
-    const rows = scope === 'alltime' ? q.boardTopAll.all(game, 50) : q.boardTop.all(game, day, 50);
+    const rows = scope === 'alltime' ? alltimeBoard(game) : q.boardTop.all(game, day, 50);
     // Competition ranking (ties share a rank), matching rankDaily's
     // COUNT(score > x) + 1 definition — a positional index would contradict
     // `me.rank` inside this same response whenever two scores tie.

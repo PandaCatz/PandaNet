@@ -14,7 +14,7 @@ with its expected output.
 | `mp.js` | Realtime layer required by server.js: RFC 6455 WebSocket server + room manager (quickmatch, private codes, synchronized starts, state relay, results). |
 | `client-sdk.js` | Browser SDK for direct mode; also documents the client half of every flow. Served at `/client-sdk.js`. |
 | `demo.html` | Interactive console exercising every endpoint incl. a scripted rival bot for multiplayer. Served at `/`. |
-| `test.js` | 65-assertion end-to-end suite. Spawns its own scratch server + DB; safe to run anywhere, touches nothing outside this folder. |
+| `test.js` | 67-assertion end-to-end suite. Spawns its own scratch server + DB; safe to run anywhere, touches nothing outside this folder. |
 | `deploy/setup.sh` | One-shot Ubuntu 24.04 provisioner (Node 22, Caddy TLS, systemd, ufw, backups). |
 | `deploy/pandanet.service` | Hardened systemd unit. |
 | `deploy/Caddyfile` | TLS + reverse proxy (WebSocket passes through automatically). |
@@ -36,7 +36,7 @@ node --version        # must print v22.5.0 or later
 node test.js          # from inside the server/ folder
 ```
 
-Expected: lines of `ok ...` ending in exactly `65 passed, 0 failed`, exit
+Expected: lines of `ok ...` ending in exactly `67 passed, 0 failed`, exit
 code 0. Takes ~15 s (contains real countdowns and wall-clock checks). Do not
 proceed on any failure.
 
@@ -51,6 +51,7 @@ proceed on any failure.
 | `SEED_KEY` | yes | HMAC key from which every game's daily seed is derived. **Changing it changes every daily seed**; set once, back it up, never rotate mid-day. |
 | `PROXY_KEY` | for platform mode | Shared secret the platform proxy presents in `X-Proxy-Key`. Unset = direct mode only. |
 | `TRUST_PROXY` | `1` behind Caddy | Trust the first `X-Forwarded-For` entry for rate limiting. |
+| `RATE_PER_MIN` | no (60) | Requests per minute per key (client IP, or the vouched player in proxy mode). Raise it when one proxy fronts many games. |
 | `MP_DEBUG` | debug only | `1` logs every inbound multiplayer message to stderr. |
 
 ## 3. Deploy (Ubuntu 24.04 VPS, ~10 minutes)
@@ -207,7 +208,7 @@ top of `mp.js`, and `client-sdk.js` `connect()` is a working reference client.
 
 ## 8. Acceptance checklist
 
-- [ ] `node test.js` → `65 passed, 0 failed` on the target box
+- [ ] `node test.js` → `67 passed, 0 failed` on the target box
 - [ ] `https://<domain>/api/health` returns `ok:true` with valid TLS
 - [ ] Demo console: hello → start → finish → board shows the run
 - [ ] Demo console: connect → host → spawn rival bot → live states stream → result board appears
